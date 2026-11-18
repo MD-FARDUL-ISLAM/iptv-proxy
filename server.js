@@ -3,6 +3,8 @@ const fetch = require('node-fetch');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.set('trust proxy', true);
+
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, OPTIONS, HEAD');
@@ -20,7 +22,7 @@ app.get('/', async (req, res) => {
     }
 
     try {
-        const proxyOrigin = `${req.protocol}://${req.get('host')}`;
+        const proxyOrigin = `https://${req.get('host')}`;
         const response = await fetch(targetUrl, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -29,18 +31,13 @@ app.get('/', async (req, res) => {
             redirect: 'follow'
         });
 
-        const contentType = response.headers.get('Content-Type') || '';
-        const newHeaders = new Headers(response.headers);
-        newHeaders.set('Access-Control-Allow-Origin', '*');
-        newHeaders.delete('Content-Security-Policy');
-        newHeaders.delete('X-Frame-Options');
+        const contentType = response.headers.get('content-type') || '';
 
-        // যদি ফাইলটি .m3u8 বা প্লেলিস্ট হয়, তবে ভেতরের লিংকগুলো প্রক্সি দিয়ে রিরাইট করে দিতে হবে
-        if (targetUrl.includes('.m3u8') || contentType.includes('mpegurl') || contentType.includes('x-mpegURL')) {
+        if (targetUrl.includes('.m3u8') || contentType.includes('mpegurl') || contentType.includes('x-mpegurl')) {
             let playlistText = await response.text();
             const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
 
-            const rewrittenLines = playlistText.split('\n').map(line => {
+            const rewrittenLines = playlistText.split(/\r?\n/).map(line => {
                 const trimmed = line.trim();
                 if (!trimmed || trimmed.startsWith('#')) {
                     return line.replace(/URI="([^"]+)"/g, (match, uri) => {
@@ -52,13 +49,14 @@ app.get('/', async (req, res) => {
                 return `${proxyOrigin}/?url=${encodeURIComponent(absoluteSegmentUrl)}`;
             });
 
-            newHeaders.set('Content-Type', 'application/vnd.apple.mpegurl');
+            res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+            res.setHeader('Access-Control-Allow-Origin', '*');
             return res.status(response.status).send(rewrittenLines.join('\n'));
         }
 
-        // সাধারণ স্ট্রিম বা বাইনারি ফাইল হলে সরাসরি পাইপ করা
         response.headers.forEach((val, key) => {
-            if (key.toLowerCase() !== 'content-security-policy' && key.toLowerCase() !== 'x-frame-options') {
+            const lowerKey = key.toLowerCase();
+            if (lowerKey !== 'content-security-policy' && lowerKey !== 'x-frame-options' && lowerKey !== 'content-encoding') {
                 res.setHeader(key, val);
             }
         });
